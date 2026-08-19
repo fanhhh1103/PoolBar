@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+PoolBar.app/
+.DS_Store
+*.swp
+xcuserdata/
+DerivedData/
+
+# local agent handoff, not part of the public app
+.planning/
+task_plan.md
+findings.md
+progress.md
