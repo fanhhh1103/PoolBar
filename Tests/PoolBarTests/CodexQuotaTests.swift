@@ -249,6 +249,26 @@ struct CodexQuotaTests {
         #expect(parsed.error == "rate_limits 里没有 used_percent")
     }
 
+    @Test func expiredMissingUsedPercentStaysNil() {
+        let oldEnd = now.addingTimeInterval(-3600)
+        let rl: [String: Any] = [
+            "primary": [
+                "window_minutes": weekMinutes,
+                "resets_at": oldEnd.timeIntervalSince1970,
+            ] as [String: Any],
+        ]
+        let parsed = CodexQuota.parse(
+            rateLimits: rl,
+            snapshotAt: oldEnd.addingTimeInterval(-3 * 86_400),
+            now: now
+        )
+        #expect(parsed.usedPercent == nil)
+        #expect(parsed.stale == true)
+        #expect(parsed.resetsAt == oldEnd.addingTimeInterval(weekMinutes * 60))
+        #expect(parsed.error == "rate_limits 里没有 used_percent")
+        #expect(parsed.detail?.contains("推定为 0") != true)
+    }
+
     @Test func isoResetsAtString() {
         let end = "2026-08-27T12:00:00Z"
         let rl: [String: Any] = [

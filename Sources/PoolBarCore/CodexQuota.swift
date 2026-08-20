@@ -104,7 +104,7 @@ public enum CodexQuota {
             resetsAt: rolled.resetsAt,
             spanSeconds: span,
             label: label(spanSeconds: span),
-            detail: rolled.stale
+            detail: rolled.stale && rawUsed != nil
                 ? String(
                     format: "快照 %.0f%% 属于已结束周期, 按重置推定为 0%%, 需重新跑一次 Codex",
                     rawUsed ?? 0
@@ -216,7 +216,7 @@ public enum CodexQuota {
                 next = next.addingTimeInterval(spanSeconds)
             }
         }
-        return (0, next, true)
+        return (usedPercent.map { _ in 0 }, next, true)
     }
 
     static func label(spanSeconds: TimeInterval?) -> String {
