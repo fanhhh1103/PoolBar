@@ -43,3 +43,14 @@ On code changes:
 2. `./Scripts/package.sh` then `./Scripts/install.sh --no-launch` if you need a local .app
 
 Authority: this file → `README.md` → source.
+
+## Cursor Cloud specific instructions
+
+Cloud Agent VMs are Linux, but PoolBar is a macOS-only menu bar app. The GUI executable (`Sources/PoolBar`, imports `SwiftUI`/`Combine`/`Security`), `Scripts/package.sh`/`install.sh` (`.app` bundle, `codesign`, `open`), and the live menu bar cannot build or run on Linux. Real GUI/`.app` verification and full CI happen on macOS (`.github/workflows/test.yml` runs `swift test` on `macos-15`). Do not try to launch the app here.
+
+What the Linux VM can build/test:
+
+- Swift 6 toolchain is installed via swiftly and persisted in the snapshot; `swift` is on `PATH` via `~/.profile` and `~/.bashrc`. The package has no external SPM dependencies.
+- `swift build --target PoolBarCore` compiles the cross-platform core (`Sources/PoolBarCore/DailyBurn.swift`, Foundation only).
+- Plain `swift test` FAILS on Linux because SwiftPM also compiles the macOS-only `PoolBar` executable target. To run the real `PoolBarTests`/`DailyBurnTests` here, copy `Sources/PoolBarCore` and `Tests/PoolBarTests` into a throwaway SwiftPM package that declares only the `PoolBarCore` library + `PoolBarTests` test target (no executable, no `platforms`), then run `swift test` there.
+- `Scripts/cursor-usage.py` runs on Linux (`python3 -m py_compile` passes), but needs a signed-in macOS Cursor session for real data; on Linux `refresh --dry-run` exits 2 ("No Cursor session token found"), which is expected.
