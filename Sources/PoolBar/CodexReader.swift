@@ -1,7 +1,8 @@
 import Foundation
+import PoolBarCore
 
-/// 对齐 quota.py 的 read_codex_quota(): 扫 ~/.codex/sessions/**/*.jsonl,
-/// 取 mtime 最新的若干个文件里最后一条非空 rate_limits 事件。
+/// 扫 ~/.codex/sessions/**/*.jsonl, 取 mtime 最新的若干个文件里最新一条非空 rate_limits。
+/// 窗口选用 / 过期清零在 CodexQuota，避免重置后仍钉死旧周期 used%。
 enum CodexReader {
     static func read() -> PoolStatus {
         var status = PoolStatus.empty("codex")
@@ -35,7 +36,8 @@ enum CodexReader {
             .prefix(40)
             .map { ($0.0.path, $0.1) }
 
-        var newestTimestamp: String?
+        var newestDate: Date?
+        var newestTsString: String?
         var newestPayload: [String: Any]?
 
         // 会话文件是追加写的日志, 我们只要「最后一条」rate_limits 事件, 它几乎总在
@@ -55,55 +57,44 @@ enum CodexReader {
 
             for line in lines where line.contains("rate_limits") {
                 guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                      let payload = obj["payload"] as? [String: Any],
-                      let rl = payload["rate_limits"] as? [String: Any],
-                      rl["primary"] is [String: Any]
+                      let rl = CodexQuota.extractRateLimits(from: obj)
                 else { continue }
-                let ts = obj["timestamp"] as? String ?? ""
-                if newestTimestamp == nil || ts > newestTimestamp! {
-                    newestTimestamp = ts
+                let ts = CodexQuota.eventTimestamp(from: obj)
+                let tsString = CodexQuota.eventTimestampString(from: obj)
+                if CodexQuota.isNewerEvent(
+                    timestamp: ts,
+                    timestampString: tsString,
+                    than: newestDate,
+                    bestString: newestTsString
+                ) {
+                    newestDate = ts
+                    newestTsString = tsString
                     newestPayload = rl
                 }
             }
         }
 
-        guard let rl = newestPayload, let primary = rl["primary"] as? [String: Any] else {
+        guard let rl = newestPayload else {
             status.error = "会话日志里没有 rate_limits 记录"
             return status
         }
 
-        let usedPercent = (primary["used_percent"] as? NSNumber)?.doubleValue
-        let windowMinutes = (primary["window_minutes"] as? NSNumber)?.doubleValue
-        let resetsAtEpoch = (primary["resets_at"] as? NSNumber)?.doubleValue
-        let resetsAt = resetsAtEpoch.map { Date(timeIntervalSince1970: $0) }
-        let span = windowMinutes.map { $0 * 60 }
-
-        let credits = rl["credits"] as? [String: Any]
-        let balance = (credits?["balance"] as? NSNumber)?.doubleValue ?? 0
-        let hasCredits = (credits?["has_credits"] as? Bool) ?? false
-        let planType = rl["plan_type"] as? String ?? "?"
-        let detail = "套餐 \(planType)" + (hasCredits ? String(format: "  credits %.0f", balance) : "")
-
+        let snapshotAt = newestDate ?? CodexQuota.parseISO8601(newestTsString ?? "")
+        let parsed = CodexQuota.parse(rateLimits: rl, snapshotAt: snapshotAt)
         return PoolStatus.single(
             name: "codex",
-            label: "周窗口",
-            usedPercent: usedPercent,
-            resetsAt: resetsAt,
-            spanSeconds: span,
-            detail: detail,
-            snapshotAt: parseISO8601(newestTimestamp ?? ""),
-            error: usedPercent == nil ? "rate_limits 里没有 used_percent" : nil
+            label: parsed.label,
+            usedPercent: parsed.usedPercent,
+            resetsAt: parsed.resetsAt,
+            spanSeconds: parsed.spanSeconds,
+            detail: parsed.detail,
+            snapshotAt: parsed.snapshotAt,
+            error: parsed.error
         )
     }
 }
 
 /// 兼容带/不带小数秒的 ISO8601 时间戳, 与 claude-usage.py 里的 iso_to_epoch 同样宽容。
 func parseISO8601(_ s: String) -> Date? {
-    guard !s.isEmpty else { return nil }
-    let withFrac = ISO8601DateFormatter()
-    withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let d = withFrac.date(from: s) { return d }
-    let plain = ISO8601DateFormatter()
-    plain.formatOptions = [.withInternetDateTime]
-    return plain.date(from: s)
+    CodexQuota.parseISO8601(s)
 }
